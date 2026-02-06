@@ -1,0 +1,816 @@
+import React, { useState, useMemo } from 'react';
+import { Calendar, TrendingUp, Target, DollarSign, Users, Phone, CheckCircle, AlertCircle, BarChart3 } from 'lucide-react';
+
+const SalesRampCalendar = () => {
+  const [startDate, setStartDate] = useState('2025-03-01');
+  const [currentWeek, setCurrentWeek] = useState(1);
+  const [activeTab, setActiveTab] = useState('calendar');
+ 
+  // What-if scenario inputs
+  const [scenarioCalls, setScenarioCalls] = useState(180);
+  const [scenarioEnrollments, setScenarioEnrollments] = useState(40);
+  const [scenarioCloseRate, setScenarioCloseRate] = useState(20);
+  const [scenarioHours, setScenarioHours] = useState(6);
+ 
+  // Constants
+  const TRAINING_WEEKS = 6;
+  const ENROLLMENT_TO_MEETING_WEEKS = 1.5;
+  const MEETING_TO_CLOSE_WEEKS = 6;
+  const AVG_DEAL_VALUE = 15600;
+  const BASE_CLOSE_RATE = 0.20;
+ 
+  // Monthly milestones
+  const milestones = [
+    { month: 3, week: 13, target: 0, description: "First closes expected", type: "info" },
+    { month: 4, week: 17, target: 31200, description: "2 deals/month rhythm", type: "warning" },
+    { month: 6, week: 26, target: 46800, description: "Foundation complete - 3 deals/month", type: "success" },
+    { month: 9, week: 39, target: 75000, description: "Tier 1 Target - $25k/mo avg", type: "milestone" },
+    { month: 12, week: 52, target: 93600, description: "Maintain Tier 1 + repeat business", type: "success" },
+    { month: 18, week: 78, target: 124800, description: "Building to Tier 2", type: "warning" },
+    { month: 21, week: 91, target: 150000, description: "Tier 2 Target - $50k/mo avg", type: "milestone" }
+  ];
+ 
+  const getWeekData = (weekNum, useScenario = false) => {
+    const phase = weekNum <= TRAINING_WEEKS ? 'training' :
+                  weekNum <= 26 ? 'foundation' :
+                  weekNum <= 52 ? 'tier1' : 'tier2';
+   
+    let callsPerWeek, enrollmentsPerWeek, prospectingHours, closeRate;
+   
+    if (useScenario && weekNum > TRAINING_WEEKS) {
+      callsPerWeek = scenarioCalls;
+      enrollmentsPerWeek = scenarioEnrollments;
+      prospectingHours = scenarioHours;
+      closeRate = scenarioCloseRate / 100;
+    } else {
+      if (phase === 'training') {
+        callsPerWeek = weekNum <= 2 ? 40 : weekNum <= 4 ? 80 : 120;
+        enrollmentsPerWeek = weekNum <= 2 ? 10 : weekNum <= 4 ? 20 : 30;
+        prospectingHours = weekNum <= 2 ? 2 : weekNum <= 4 ? 3 : 4;
+        closeRate = BASE_CLOSE_RATE;
+      } else if (phase === 'foundation') {
+        callsPerWeek = 120 + ((weekNum - TRAINING_WEEKS) * 3);
+        enrollmentsPerWeek = 30 + ((weekNum - TRAINING_WEEKS) * 0.5);
+        prospectingHours = 4 + ((weekNum - TRAINING_WEEKS) * 0.1);
+        closeRate = BASE_CLOSE_RATE;
+      } else if (phase === 'tier1') {
+        callsPerWeek = 180;
+        enrollmentsPerWeek = 40;
+        prospectingHours = 6;
+        closeRate = 0.22;
+      } else {
+        callsPerWeek = 240;
+        enrollmentsPerWeek = 50;
+        prospectingHours = 8;
+        closeRate = 0.25;
+      }
+    }
+   
+    const enrollmentWeek = weekNum - Math.ceil(ENROLLMENT_TO_MEETING_WEEKS);
+    let meetingsThisWeek = 0;
+    if (enrollmentWeek > TRAINING_WEEKS) {
+      const pastEnrollments = useScenario ? scenarioEnrollments :
+                              (phase === 'foundation' ? 30 + ((enrollmentWeek - TRAINING_WEEKS) * 0.5) :
+                              phase === 'tier1' ? 40 : 50);
+      meetingsThisWeek = pastEnrollments * 0.04;
+    }
+   
+    const meetingWeek = weekNum - MEETING_TO_CLOSE_WEEKS;
+    let closesThisWeek = 0;
+    if (meetingWeek > TRAINING_WEEKS + Math.ceil(ENROLLMENT_TO_MEETING_WEEKS)) {
+      const pastPhase = meetingWeek <= 26 ? 'foundation' : meetingWeek <= 52 ? 'tier1' : 'tier2';
+      const pastMeetings = useScenario ? (scenarioEnrollments * 0.04) :
+                          (pastPhase === 'foundation' ? 1.2 : pastPhase === 'tier1' ? 1.6 : 2);
+      closesThisWeek = pastMeetings * closeRate;
+    }
+   
+    return {
+      week: weekNum,
+      phase,
+      calls: Math.round(callsPerWeek),
+      enrollments: Math.round(enrollmentsPerWeek),
+      meetings: Math.round(meetingsThisWeek * 10) / 10,
+      closes: Math.round(closesThisWeek * 10) / 10,
+      revenue: Math.round(closesThisWeek * AVG_DEAL_VALUE),
+      prospectingHours: Math.round(prospectingHours * 10) / 10,
+      closeRate: Math.round(closeRate * 100)
+    };
+  };
+ 
+  const calculateCumulatives = (throughWeek, useScenario = false) => {
+    let totalMeetings = 0;
+    let totalCloses = 0;
+    let totalRevenue = 0;
+   
+    for (let w = 1; w <= throughWeek; w++) {
+      const data = getWeekData(w, useScenario);
+      totalMeetings += data.meetings;
+      totalCloses += data.closes;
+      totalRevenue += data.revenue;
+    }
+   
+    return { totalMeetings, totalCloses, totalRevenue };
+  };
+ 
+  const calculate3MonthAvg = (throughWeek, useScenario = false) => {
+    const startWeek = Math.max(1, throughWeek - 12);
+    let revenue = 0;
+    for (let w = startWeek; w <= throughWeek; w++) {
+      revenue += getWeekData(w, useScenario).revenue;
+    }
+    return Math.round(revenue / 3);
+  };
+ 
+  // Pipeline coverage calculation
+  const calculatePipelineCoverage = (weekNum) => {
+    let activePipeline = 0;
+   
+    // Count all deals in process (from meetings in last 6 weeks that haven't closed)
+    for (let w = Math.max(1, weekNum - 6); w < weekNum; w++) {
+      const weekData = getWeekData(w);
+      const potentialDeals = weekData.meetings;
+      activePipeline += potentialDeals * AVG_DEAL_VALUE;
+    }
+   
+    const monthlyTarget = weekNum <= 39 ? 25000 : 50000;
+    const coverageRatio = activePipeline / monthlyTarget;
+   
+    return {
+      activePipeline,
+      monthlyTarget,
+      coverageRatio,
+      recommendation: coverageRatio < 3 ? 'Increase activity - pipeline too thin' :
+                     coverageRatio > 5 ? 'Strong pipeline - maintain activity' :
+                     'Healthy pipeline coverage'
+    };
+  };
+ 
+  const weekData = getWeekData(currentWeek);
+  const cumulatives = calculateCumulatives(currentWeek);
+  const rolling3Mo = calculate3MonthAvg(currentWeek);
+  const pipelineCoverage = calculatePipelineCoverage(currentWeek);
+ 
+  // Scenario comparison
+  const scenarioCumulatives = calculateCumulatives(currentWeek, true);
+  const scenarioRolling3Mo = calculate3MonthAvg(currentWeek, true);
+ 
+  const calendarWeeks = useMemo(() => {
+    const weeks = [];
+    const startWeek = Math.floor((currentWeek - 1) / 4) * 4 + 1;
+    for (let i = 0; i < 4; i++) {
+      weeks.push(getWeekData(startWeek + i));
+    }
+    return weeks;
+  }, [currentWeek]);
+ 
+  const getPhaseColor = (phase) => {
+    switch(phase) {
+      case 'training': return 'bg-gray-100 border-gray-300';
+      case 'foundation': return 'bg-blue-50 border-blue-300';
+      case 'tier1': return 'bg-green-50 border-green-300';
+      case 'tier2': return 'bg-purple-50 border-purple-300';
+      default: return 'bg-gray-50';
+    }
+  };
+ 
+  const getPhaseLabel = (phase) => {
+    switch(phase) {
+      case 'training': return 'Training';
+      case 'foundation': return 'Foundation (Wks 7-26)';
+      case 'tier1': return 'Tier 1 Push (Wks 27-52)';
+      case 'tier2': return 'Tier 2 Push (Wks 53+)';
+      default: return '';
+    }
+  };
+ 
+  const getMilestoneForWeek = (weekNum) => {
+    return milestones.find(m => m.week === weekNum);
+  };
+ 
+  const getMilestoneColor = (type) => {
+    switch(type) {
+      case 'milestone': return 'bg-yellow-100 border-yellow-400 text-yellow-800';
+      case 'success': return 'bg-green-100 border-green-400 text-green-800';
+      case 'warning': return 'bg-orange-100 border-orange-400 text-orange-800';
+      case 'info': return 'bg-blue-100 border-blue-400 text-blue-800';
+      default: return 'bg-gray-100 border-gray-400 text-gray-800';
+    }
+  };
+
+  return (
+    <div className="w-full max-w-7xl mx-auto p-6 bg-gradient-to-br from-slate-50 to-slate-100 rounded-lg">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-2">
+          <TrendingUp className="text-blue-600" />
+          Sales Ramp-Up Management System
+        </h1>
+        <p className="text-slate-600">Complete pipeline tracking with milestones, coverage analysis, and what-if scenarios</p>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 mb-6">
+        <div className="flex border-b border-slate-200">
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              activeTab === 'calendar'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            <Calendar className="w-4 h-4 inline mr-2" />
+            Calendar & Targets
+          </button>
+          <button
+            onClick={() => setActiveTab('pipeline')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              activeTab === 'pipeline'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 inline mr-2" />
+            Pipeline Coverage
+          </button>
+          <button
+            onClick={() => setActiveTab('scenario')}
+            className={`px-6 py-3 font-medium transition-colors ${
+              activeTab === 'scenario'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            <Target className="w-4 h-4 inline mr-2" />
+            What-If Scenarios
+          </button>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="bg-white rounded-lg p-4 mb-6 shadow-sm border border-slate-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Start Date</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Current Week</label>
+            <input
+              type="range"
+              min="1"
+              max="91"
+              value={currentWeek}
+              onChange={(e) => setCurrentWeek(parseInt(e.target.value))}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-slate-500 mt-1">
+              <span>Week {currentWeek}</span>
+              <span className="font-medium text-slate-700">{getPhaseLabel(weekData.phase)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Key Metrics Dashboard */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-lg p-4 shadow-sm border-l-4 border-blue-500">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-slate-600">Total Meetings</span>
+            <Users className="w-4 h-4 text-blue-500" />
+          </div>
+          <div className="text-2xl font-bold text-slate-800">{Math.round(cumulatives.totalMeetings)}</div>
+        </div>
+       
+        <div className="bg-white rounded-lg p-4 shadow-sm border-l-4 border-green-500">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-slate-600">Total Closes</span>
+            <CheckCircle className="w-4 h-4 text-green-500" />
+          </div>
+          <div className="text-2xl font-bold text-slate-800">{Math.round(cumulatives.totalCloses * 10) / 10}</div>
+        </div>
+       
+        <div className="bg-white rounded-lg p-4 shadow-sm border-l-4 border-purple-500">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-slate-600">Total Revenue</span>
+            <DollarSign className="w-4 h-4 text-purple-500" />
+          </div>
+          <div className="text-2xl font-bold text-slate-800">${(cumulatives.totalRevenue / 1000).toFixed(0)}k</div>
+        </div>
+       
+        <div className="bg-white rounded-lg p-4 shadow-sm border-l-4 border-orange-500">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-slate-600">3-Mo Avg</span>
+            <Target className="w-4 h-4 text-orange-500" />
+          </div>
+          <div className="text-2xl font-bold text-slate-800">${(rolling3Mo / 1000).toFixed(0)}k</div>
+          <div className="text-xs mt-1">
+            {rolling3Mo >= 50000 ? (
+              <span className="text-green-600 font-medium">✓ Tier 2!</span>
+            ) : rolling3Mo >= 25000 ? (
+              <span className="text-blue-600 font-medium">✓ Tier 1</span>
+            ) : (
+              <span className="text-slate-500">Target: $25k</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Calendar Tab */}
+      {activeTab === 'calendar' && (
+        <>
+          {/* Milestone Alert */}
+          {getMilestoneForWeek(currentWeek) && (
+            <div className={`rounded-lg border-2 p-4 mb-6 ${getMilestoneColor(getMilestoneForWeek(currentWeek).type)}`}>
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 mt-0.5" />
+                <div>
+                  <div className="font-bold">Month {getMilestoneForWeek(currentWeek).month} Milestone</div>
+                  <div className="text-sm mt-1">{getMilestoneForWeek(currentWeek).description}</div>
+                  {getMilestoneForWeek(currentWeek).target > 0 && (
+                    <div className="text-sm mt-1 font-medium">
+                      Target: ${(getMilestoneForWeek(currentWeek).target / 1000).toFixed(0)}k in rolling 3-month period
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Current Week Detail */}
+          <div className="bg-white rounded-lg p-6 mb-6 shadow-md border-2 border-blue-400">
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <Calendar className="text-blue-600" />
+              Week {currentWeek} Activity Targets
+            </h2>
+           
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-slate-50 rounded p-3">
+                <div className="text-xs text-slate-600 mb-1">Prospecting Hours</div>
+                <div className="text-xl font-bold text-slate-800">{weekData.prospectingHours}</div>
+              </div>
+              <div className="bg-blue-50 rounded p-3">
+                <div className="text-xs text-slate-600 mb-1">Calls to Make</div>
+                <div className="text-xl font-bold text-blue-700">{weekData.calls}</div>
+              </div>
+              <div className="bg-indigo-50 rounded p-3">
+                <div className="text-xs text-slate-600 mb-1">New Enrollments</div>
+                <div className="text-xl font-bold text-indigo-700">{weekData.enrollments}</div>
+              </div>
+              <div className="bg-green-50 rounded p-3">
+                <div className="text-xs text-slate-600 mb-1">Expected Meetings</div>
+                <div className="text-xl font-bold text-green-700">{weekData.meetings}</div>
+                <div className="text-xs text-slate-500">From wk {Math.max(1, currentWeek - 2)} enrollments</div>
+              </div>
+            </div>
+           
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <div className="bg-emerald-50 rounded p-3">
+                <div className="text-xs text-slate-600 mb-1">Expected Closes</div>
+                <div className="text-xl font-bold text-emerald-700">{weekData.closes}</div>
+                <div className="text-xs text-slate-500">From wk {Math.max(1, currentWeek - 6)} meetings</div>
+              </div>
+              <div className="bg-purple-50 rounded p-3">
+                <div className="text-xs text-slate-600 mb-1">Expected Revenue</div>
+                <div className="text-xl font-bold text-purple-700">${(weekData.revenue / 1000).toFixed(1)}k</div>
+                <div className="text-xs text-slate-500">Close rate: {weekData.closeRate}%</div>
+              </div>
+            </div>
+          </div>
+
+          {/* 4-Week Calendar View */}
+          <div className="bg-white rounded-lg p-6 shadow-md mb-6">
+            <h2 className="text-xl font-bold text-slate-800 mb-4">4-Week View</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {calendarWeeks.map((week) => {
+                const milestone = getMilestoneForWeek(week.week);
+                return (
+                  <div
+                    key={week.week}
+                    className={`rounded-lg border-2 p-4 ${getPhaseColor(week.phase)} ${
+                      week.week === currentWeek ? 'ring-2 ring-blue-500' : ''
+                    }`}
+                  >
+                    <div className="font-bold text-sm text-slate-700 mb-1">Week {week.week}</div>
+                    {milestone && (
+                      <div className="text-xs font-medium text-orange-600 mb-2">
+                        🎯 Month {milestone.month} Milestone
+                      </div>
+                    )}
+                   
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Calls:</span>
+                        <span className="font-semibold">{week.calls}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Enrollments:</span>
+                        <span className="font-semibold">{week.enrollments}</span>
+                      </div>
+                      <div className="flex justify-between border-t pt-2">
+                        <span className="text-slate-600">Meetings:</span>
+                        <span className="font-semibold text-blue-700">{week.meetings}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Closes:</span>
+                        <span className="font-semibold text-green-700">{week.closes}</span>
+                      </div>
+                      <div className="flex justify-between border-t pt-2">
+                        <span className="text-slate-600">Revenue:</span>
+                        <span className="font-semibold text-purple-700">${(week.revenue / 1000).toFixed(1)}k</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Milestone Timeline */}
+          <div className="bg-white rounded-lg p-6 shadow-md">
+            <h2 className="text-xl font-bold text-slate-800 mb-4">Milestone Timeline</h2>
+            <div className="space-y-3">
+              {milestones.map((milestone, idx) => {
+                const isPast = currentWeek > milestone.week;
+                const isCurrent = currentWeek === milestone.week;
+                const cumAtMilestone = calculateCumulatives(milestone.week);
+                const rolling3MoAtMilestone = calculate3MonthAvg(milestone.week);
+                const achieved = milestone.target === 0 || rolling3MoAtMilestone >= milestone.target;
+               
+                return (
+                  <div
+                    key={idx}
+                    className={`flex items-start gap-4 p-4 rounded-lg border-2 ${
+                      isCurrent ? 'border-blue-500 bg-blue-50' :
+                      isPast ? (achieved ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50') :
+                      'border-slate-200 bg-slate-50'
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-white ${
+                      isPast ? (achieved ? 'bg-green-500' : 'bg-red-500') : 'bg-slate-400'
+                    }`}>
+                      {milestone.month}
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-bold text-slate-800">
+                        Month {milestone.month} - Week {milestone.week}
+                      </div>
+                      <div className="text-sm text-slate-600 mt-1">{milestone.description}</div>
+                      {milestone.target > 0 && isPast && (
+                        <div className="text-sm mt-2">
+                          <span className="font-medium">Actual: </span>
+                          ${(rolling3MoAtMilestone / 1000).toFixed(0)}k / ${(milestone.target / 1000).toFixed(0)}k
+                          {achieved ? (
+                            <span className="ml-2 text-green-600 font-medium">✓ Achieved</span>
+                          ) : (
+                            <span className="ml-2 text-red-600 font-medium">✗ Missed</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Pipeline Coverage Tab */}
+      {activeTab === 'pipeline' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg p-6 shadow-md">
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <BarChart3 className="text-blue-600" />
+              Pipeline Coverage Analysis
+            </h2>
+           
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+              <div className="bg-blue-50 rounded-lg p-4">
+                <div className="text-sm text-slate-600 mb-2">Active Pipeline Value</div>
+                <div className="text-3xl font-bold text-blue-700">
+                  ${(pipelineCoverage.activePipeline / 1000).toFixed(0)}k
+                </div>
+                <div className="text-xs text-slate-500 mt-1">Deals in process (last 6 weeks of meetings)</div>
+              </div>
+             
+              <div className="bg-purple-50 rounded-lg p-4">
+                <div className="text-sm text-slate-600 mb-2">Monthly Target</div>
+                <div className="text-3xl font-bold text-purple-700">
+                  ${(pipelineCoverage.monthlyTarget / 1000).toFixed(0)}k
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  {pipelineCoverage.monthlyTarget === 25000 ? 'Tier 1 Target' : 'Tier 2 Target'}
+                </div>
+              </div>
+             
+              <div className={`rounded-lg p-4 ${
+                pipelineCoverage.coverageRatio < 3 ? 'bg-red-50' :
+                pipelineCoverage.coverageRatio > 5 ? 'bg-green-50' :
+                'bg-yellow-50'
+              }`}>
+                <div className="text-sm text-slate-600 mb-2">Coverage Ratio</div>
+                <div className={`text-3xl font-bold ${
+                  pipelineCoverage.coverageRatio < 3 ? 'text-red-700' :
+                  pipelineCoverage.coverageRatio > 5 ? 'text-green-700' :
+                  'text-yellow-700'
+                }`}>
+                  {pipelineCoverage.coverageRatio.toFixed(1)}x
+                </div>
+                <div className="text-xs text-slate-500 mt-1">{pipelineCoverage.recommendation}</div>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-lg p-4">
+              <h3 className="font-bold text-slate-800 mb-3">Understanding Pipeline Coverage</h3>
+              <div className="space-y-2 text-sm text-slate-600">
+                <div className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full mt-1.5"></div>
+                  <div><strong>5x+ Coverage:</strong> Excellent pipeline health. Maintain current activity levels.</div>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-yellow-500 rounded-full mt-1.5"></div>
+                  <div><strong>3-5x Coverage:</strong> Healthy pipeline. Keep prospecting consistently.</div>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="w-2 h-2 bg-red-500 rounded-full mt-1.5"></div>
+                  <div><strong>Under 3x:</strong> Pipeline too thin. Increase calling and enrollment activity immediately.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Pipeline by Week Breakdown */}
+          <div className="bg-white rounded-lg p-6 shadow-md">
+            <h3 className="font-bold text-slate-800 mb-4">12-Week Pipeline Projection</h3>
+            <div className="space-y-2">
+              {Array.from({ length: 12 }, (_, i) => {
+                const week = currentWeek + i;
+                const coverage = calculatePipelineCoverage(week);
+                return (
+                  <div key={i} className="flex items-center gap-4 p-3 bg-slate-50 rounded">
+                    <div className="w-16 font-medium text-slate-700">Wk {week}</div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-slate-200 rounded-full h-6 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              coverage.coverageRatio < 3 ? 'bg-red-500' :
+                              coverage.coverageRatio > 5 ? 'bg-green-500' :
+                              'bg-yellow-500'
+                            }`}
+                            style={{ width: `${Math.min(100, (coverage.coverageRatio / 6) * 100)}%` }}
+                          ></div>
+                        </div>
+                        <div className="w-20 text-right font-bold text-slate-700">
+                          {coverage.coverageRatio.toFixed(1)}x
+                        </div>
+                      </div>
+                    </div>
+                    <div className="w-32 text-right text-sm text-slate-600">
+                      ${(coverage.activePipeline / 1000).toFixed(0)}k
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* What-If Scenario Tab */}
+      {activeTab === 'scenario' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg p-6 shadow-md">
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <Target className="text-blue-600" />
+              What-If Scenario Builder
+            </h2>
+            <p className="text-sm text-slate-600 mb-6">
+              Adjust the inputs below to see how different activity levels affect your results
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Weekly Calls: {scenarioCalls}
+                </label>
+                <input
+                  type="range"
+                  min="80"
+                  max="400"
+                  step="20"
+                  value={scenarioCalls}
+                  onChange={(e) => setScenarioCalls(parseInt(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>80</span>
+                  <span>400</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Weekly Enrollments: {scenarioEnrollments}
+                </label>
+                <input
+                  type="range"
+                  min="20"
+                  max="80"
+                  step="5"
+                  value={scenarioEnrollments}
+                  onChange={(e) => setScenarioEnrollments(parseInt(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>20</span>
+                  <span>80</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Close Rate: {scenarioCloseRate}%
+                </label>
+                <input
+                  type="range"
+                  min="10"
+                  max="35"
+                  step="1"
+                  value={scenarioCloseRate}
+                  onChange={(e) => setScenarioCloseRate(parseInt(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>10%</span>
+                  <span>35%</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Prospecting Hours/Week: {scenarioHours}
+                </label>
+                <input
+                  type="range"
+                  min="2"
+                  max="12"
+                  step="0.5"
+                  value={scenarioHours}
+                  onChange={(e) => setScenarioHours(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                  <span>2</span>
+                  <span>12</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Scenario Metrics */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-blue-50 rounded-lg p-4">
+                <div className="text-xs text-slate-600 mb-1">Calls Per Hour</div>
+                <div className="text-2xl font-bold text-blue-700">
+                  {Math.round(scenarioCalls / scenarioHours)}
+                </div>
+              </div>
+              <div className="bg-green-50 rounded-lg p-4">
+                <div className="text-xs text-slate-600 mb-1">Weekly Meetings</div>
+                <div className="text-2xl font-bold text-green-700">
+                  {(scenarioEnrollments * 0.04).toFixed(1)}
+                </div>
+              </div>
+              <div className="bg-purple-50 rounded-lg p-4">
+                <div className="text-xs text-slate-600 mb-1">Weekly Closes</div>
+                <div className="text-2xl font-bold text-purple-700">
+                  {((scenarioEnrollments * 0.04) * (scenarioCloseRate / 100)).toFixed(1)}
+                </div>
+              </div>
+              <div className="bg-orange-50 rounded-lg p-4">
+                <div className="text-xs text-slate-600 mb-1">Weekly Revenue</div>
+                <div className="text-2xl font-bold text-orange-700">
+                  ${(((scenarioEnrollments * 0.04) * (scenarioCloseRate / 100) * AVG_DEAL_VALUE) / 1000).toFixed(1)}k
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Comparison Chart */}
+          <div className="bg-white rounded-lg p-6 shadow-md">
+            <h3 className="font-bold text-slate-800 mb-4">Baseline vs. Scenario Comparison</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <div className="text-sm font-medium text-slate-700 mb-3">Current Plan (Baseline)</div>
+                <div className="space-y-2">
+                  <div className="flex justify-between p-2 bg-slate-50 rounded">
+                    <span className="text-sm text-slate-600">Total Revenue</span>
+                    <span className="font-bold">${(cumulatives.totalRevenue / 1000).toFixed(0)}k</span>
+                  </div>
+                  <div className="flex justify-between p-2 bg-slate-50 rounded">
+                    <span className="text-sm text-slate-600">Total Closes</span>
+                    <span className="font-bold">{cumulatives.totalCloses.toFixed(1)}</span>
+                  </div>
+                  <div className="flex justify-between p-2 bg-slate-50 rounded">
+                    <span className="text-sm text-slate-600">3-Month Avg</span>
+                    <span className="font-bold">${(rolling3Mo / 1000).toFixed(0)}k</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm font-medium text-slate-700 mb-3">Your Scenario</div>
+                <div className="space-y-2">
+                  <div className="flex justify-between p-2 bg-blue-50 rounded">
+                    <span className="text-sm text-slate-600">Total Revenue</span>
+                    <span className="font-bold text-blue-700">
+                      ${(scenarioCumulatives.totalRevenue / 1000).toFixed(0)}k
+                      <span className={`ml-2 text-xs ${
+                        scenarioCumulatives.totalRevenue > cumulatives.totalRevenue ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        ({scenarioCumulatives.totalRevenue > cumulatives.totalRevenue ? '+' : ''}
+                        {(((scenarioCumulatives.totalRevenue - cumulatives.totalRevenue) / cumulatives.totalRevenue) * 100).toFixed(0)}%)
+                      </span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between p-2 bg-blue-50 rounded">
+                    <span className="text-sm text-slate-600">Total Closes</span>
+                    <span className="font-bold text-blue-700">
+                      {scenarioCumulatives.totalCloses.toFixed(1)}
+                      <span className={`ml-2 text-xs ${
+                        scenarioCumulatives.totalCloses > cumulatives.totalCloses ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        ({scenarioCumulatives.totalCloses > cumulatives.totalCloses ? '+' : ''}
+                        {(scenarioCumulatives.totalCloses - cumulatives.totalCloses).toFixed(1)})
+                      </span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between p-2 bg-blue-50 rounded">
+                    <span className="text-sm text-slate-600">3-Month Avg</span>
+                    <span className="font-bold text-blue-700">
+                      ${(scenarioRolling3Mo / 1000).toFixed(0)}k
+                      <span className={`ml-2 text-xs ${
+                        scenarioRolling3Mo > rolling3Mo ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        ({scenarioRolling3Mo > rolling3Mo ? '+' : ''}
+                        {(((scenarioRolling3Mo - rolling3Mo) / rolling3Mo) * 100).toFixed(0)}%)
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
+                <div className="text-sm text-slate-700">
+                  <strong>Impact Analysis:</strong> {
+                    scenarioRolling3Mo > rolling3Mo ?
+                    `Increasing activity to these levels could accelerate your timeline to Tier ${rolling3Mo < 25000 ? '1' : '2'} by approximately ${Math.round(Math.abs(scenarioRolling3Mo - rolling3Mo) / 15600)} deals.` :
+                    `These activity levels may slow your progress. Consider increasing calls or improving close rate.`
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timeline Key */}
+      <div className="mt-6 bg-white rounded-lg p-4 shadow-sm">
+        <h3 className="font-bold text-slate-800 mb-3">Pipeline Timing Reference</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="flex items-start gap-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full mt-1.5"></div>
+            <div>
+              <div className="font-medium">Enrollments → Meetings</div>
+              <div className="text-slate-600">~1.5 weeks delay</div>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <div className="w-2 h-2 bg-green-500 rounded-full mt-1.5"></div>
+            <div>
+              <div className="font-medium">Meetings → Closes</div>
+              <div className="text-slate-600">~6 weeks delay</div>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <div className="w-2 h-2 bg-purple-500 rounded-full mt-1.5"></div>
+            <div>
+              <div className="font-medium">Total Ramp Time</div>
+              <div className="text-slate-600">6 weeks training + 7.5 weeks to first close</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SalesRampCalendar;
